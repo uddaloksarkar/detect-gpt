@@ -16,7 +16,8 @@ import functools
 import custom_datasets
 from multiprocessing.pool import ThreadPool
 import time
-
+import glob
+import copy
 
 
 # 15 colorblind-friendly colors
@@ -205,7 +206,8 @@ def _openai_sample(p):
 
 
 # sample from base_model using ****only**** the first 30 tokens in each example as context
-def sample_from_model(texts, min_words=55, prompt_tokens=30):
+def sample_from_model(texts, min_words=1, prompt_tokens=30, prompt=''):
+    # prompt_tokens = len(base_tokenizer.encode(prompt)) # Uddalok: if we want to use the prompt then results are bad
     # encode each text as a list of token ids
     if args.dataset == 'pubmed':
         texts = [t[:t.index(custom_datasets.SEPARATOR)] for t in texts]
@@ -332,8 +334,12 @@ def get_entropy(text):
 
 
 def get_roc_metrics(real_preds, sample_preds):
+    # uddalok: added average real preds
     fpr, tpr, _ = roc_curve([0] * len(real_preds) + [1] * len(sample_preds), real_preds + sample_preds)
     roc_auc = auc(fpr, tpr)
+    # print("LOOK HERE pos::--> ", sum(1 for value in real_preds if value < 0.5) / len(real_preds) )
+    # print("LOOK HERE neg::--> ", sum(1 for value in sample_preds if value > 0.5) / len(sample_preds) )
+    print("*** Average real preds: ", sum(real_preds) / len(real_preds))
     return fpr.tolist(), tpr.tolist(), float(roc_auc)
 
 
@@ -430,6 +436,7 @@ def get_perturbation_results(span_length=10, n_perturbations=1, n_samples=500):
     perturb_fn = functools.partial(perturb_texts, span_length=span_length, pct=args.pct_words_masked)
 
     p_sampled_text = perturb_fn([x for x in sampled_text for _ in range(n_perturbations)])
+    # p_sampled_text = copy.deepcopy(p_original_text) # uddalok: proxy, we dont need sampled text
     p_original_text = perturb_fn([x for x in original_text for _ in range(n_perturbations)])
     for _ in range(n_perturbation_rounds - 1):
         try:
@@ -452,6 +459,7 @@ def get_perturbation_results(span_length=10, n_perturbations=1, n_samples=500):
 
     for res in tqdm.tqdm(results, desc="Computing log likelihoods"):
         p_sampled_ll = get_lls(res["perturbed_sampled"])
+        # p_sampled_ll = copy.deepcopy(p_original_ll) # uddalok: proxy, we dont need sampled text
         p_original_ll = get_lls(res["perturbed_original"])
         res["original_ll"] = get_ll(res["original"])
         res["sampled_ll"] = get_ll(res["sampled"])
@@ -470,9 +478,11 @@ def run_perturbation_experiment(results, criterion, span_length=10, n_perturbati
     predictions = {'real': [], 'samples': []}
     for res in results:
         if criterion == 'd':
+            # uddalok: non normalized
             predictions['real'].append(res['original_ll'] - res['perturbed_original_ll'])
             predictions['samples'].append(res['sampled_ll'] - res['perturbed_sampled_ll'])
         elif criterion == 'z':
+            # uddalok: normalized by std
             if res['perturbed_original_ll_std'] == 0:
                 res['perturbed_original_ll_std'] = 1
                 print("WARNING: std of perturbed original is 0, setting to 1")
@@ -586,7 +596,7 @@ def truncate_to_substring(text, substring, idx_occurrence):
     return text[:idx]
 
 
-def generate_samples(raw_data, batch_size):
+def generate_samples(raw_data, batch_size, prompt=''):
     torch.manual_seed(42)
     np.random.seed(42)
     data = {
@@ -597,7 +607,8 @@ def generate_samples(raw_data, batch_size):
     for batch in range(len(raw_data) // batch_size):
         print('Generating samples for batch', batch, 'of', len(raw_data) // batch_size)
         original_text = raw_data[batch * batch_size:(batch + 1) * batch_size]
-        sampled_text = sample_from_model(original_text, min_words=30 if args.dataset in ['pubmed'] else 55)
+        # sampled_text = copy.deepcopy(original_text) # uddalok : we really don't need sample from model here - this is to increase the speed
+        sampled_text = sample_from_model(original_text, min_words=30 if args.dataset in ['pubmed'] else 10, prompt=prompt)
 
         for o, s in zip(original_text, sampled_text):
             if args.dataset == 'pubmed':
@@ -619,12 +630,37 @@ def generate_samples(raw_data, batch_size):
     return data
 
 
-def generate_data(dataset, key):
+def get_all_samples(dirname):
+    allfilenames = [os.path.basename(fname) for fname in glob.glob(f"{dirname}/*")]
+    allfilenames = sorted(allfilenames)
+    samples = []
+    sampleid = []
+    for file in allfilenames:
+        with open(f"{dirname}/{file}", 'r') as fp:
+            samples.append(fp.read())
+            sampleid.append(file)
+    return samples, sampleid
+
+def loadData(promptsource):
+    allprompts = []
+    taskid = []
+    if promptsource == '../../HumanEval.jsonl':
+        with open(promptsource) as f:
+            lines = f.readlines()
+        for line in lines:
+            j = json.loads(line)
+            allprompts.append(j['prompt'])
+            taskid.append(j['task_id'].split("/")[-1])
+        return allprompts,taskid
+    else:
+        raise NotImplementedError
+
+def generate_data(dataset, key, whichtask): # uddalok: added whichtask
     # load data
     if dataset in custom_datasets.DATASETS:
         data = custom_datasets.load(dataset, cache_dir)
     else:
-        data = datasets.load_dataset(dataset, split='train', cache_dir=cache_dir)[key]
+        data = datasets.load_dataset(dataset, split='train' )[key]
 
     # get unique examples, strip whitespace, and remove newlines
     # then take just the long examples, shuffle, take the first 5,000 to tokenize to save time
@@ -633,6 +669,23 @@ def generate_data(dataset, key):
 
     # remove duplicates from the data
     data = list(dict.fromkeys(data))  # deterministic, as opposed to set()
+
+    # uddalok: hardcode
+    samp_src = 'corpus-100-sanitized/stability1/'
+    task = whichtask
+    tmpFile = 'tmp.txt'
+    cmd = 'find {}/../../{}/samples0{}.ds* > {}'.format(os.getcwd(), samp_src, task, tmpFile)
+    os.system(cmd)
+    print(f"Sample Source: {samp_src}")
+    with open(tmpFile) as tmfp:
+        lines = tmfp.readlines()
+    try:
+        sampdumpFile = lines[0].strip()
+    except IndexError:
+        print("ERR", lines)
+    data, sampleid = get_all_samples(sampdumpFile)
+    allprompts, taskid = loadData('../../HumanEval.jsonl')
+    prompt = allprompts[int(task)]
 
     # strip whitespace around each example
     data = [x.strip() for x in data]
@@ -660,7 +713,7 @@ def generate_data(dataset, key):
     print(f"Total number of samples: {len(data)}")
     print(f"Average number of words: {np.mean([len(x.split()) for x in data])}")
 
-    return generate_samples(data[:n_samples], batch_size=batch_size)
+    return generate_samples(data[:n_samples], batch_size=batch_size, prompt=prompt)
 
 
 def load_base_model_and_tokenizer(name):
@@ -671,7 +724,7 @@ def load_base_model_and_tokenizer(name):
             base_model_kwargs.update(dict(torch_dtype=torch.float16))
         if 'gpt-j' in name:
             base_model_kwargs.update(dict(revision='float16'))
-        base_model = transformers.AutoModelForCausalLM.from_pretrained(name, **base_model_kwargs, cache_dir=cache_dir)
+        base_model = transformers.AutoModelForCausalLM.from_pretrained(name, **base_model_kwargs )
     else:
         base_model = None
 
@@ -681,7 +734,7 @@ def load_base_model_and_tokenizer(name):
         optional_tok_kwargs['fast'] = False
     if args.dataset in ['pubmed']:
         optional_tok_kwargs['padding_side'] = 'left'
-    base_tokenizer = transformers.AutoTokenizer.from_pretrained(name, **optional_tok_kwargs, cache_dir=cache_dir)
+    base_tokenizer = transformers.AutoTokenizer.from_pretrained(name, **optional_tok_kwargs)
     base_tokenizer.pad_token_id = base_tokenizer.eos_token_id
 
     return base_model, base_tokenizer
@@ -689,8 +742,8 @@ def load_base_model_and_tokenizer(name):
 
 def eval_supervised(data, model):
     print(f'Beginning supervised evaluation with {model}...')
-    detector = transformers.AutoModelForSequenceClassification.from_pretrained(model, cache_dir=cache_dir).to(DEVICE)
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model, cache_dir=cache_dir)
+    detector = transformers.AutoModelForSequenceClassification.from_pretrained(model).to(DEVICE)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(model )
 
     real, fake = data['original'], data['sampled']
 
@@ -778,6 +831,7 @@ if __name__ == '__main__':
     parser.add_argument('--random_fills', action='store_true')
     parser.add_argument('--random_fills_tokens', action='store_true')
     parser.add_argument('--cache_dir', type=str, default="~/.cache")
+    parser.add_argument('--task', type=str, default="4")    # uddalok: added task
     args = parser.parse_args()
 
     API_TOKEN_COUNTER = 0
@@ -822,7 +876,7 @@ if __name__ == '__main__':
         os.makedirs(cache_dir)
     print(f"Using cache dir {cache_dir}")
 
-    GPT2_TOKENIZER = transformers.GPT2Tokenizer.from_pretrained('gpt2', cache_dir=cache_dir)
+    #GPT2_TOKENIZER = transformers.GPT2Tokenizer.from_pretrained('gpt2', cache_dir=cache_dir)
 
     # generic generative model
     base_model, base_tokenizer = load_base_model_and_tokenizer(args.base_model_name)
@@ -836,22 +890,22 @@ if __name__ == '__main__':
         elif args.half:
             half_kwargs = dict(torch_dtype=torch.bfloat16)
         print(f'Loading mask filling model {mask_filling_model_name}...')
-        mask_model = transformers.AutoModelForSeq2SeqLM.from_pretrained(mask_filling_model_name, **int8_kwargs, **half_kwargs, cache_dir=cache_dir)
+        mask_model = transformers.T5ForConditionalGeneration.from_pretrained(mask_filling_model_name, **int8_kwargs, **half_kwargs )
         try:
             n_positions = mask_model.config.n_positions
         except AttributeError:
             n_positions = 512
     else:
         n_positions = 512
-    preproc_tokenizer = transformers.AutoTokenizer.from_pretrained('t5-small', model_max_length=512, cache_dir=cache_dir)
-    mask_tokenizer = transformers.AutoTokenizer.from_pretrained(mask_filling_model_name, model_max_length=n_positions, cache_dir=cache_dir)
+    preproc_tokenizer = transformers.AutoTokenizer.from_pretrained('t5-small', model_max_length=512 )
+    mask_tokenizer = transformers.AutoTokenizer.from_pretrained(mask_filling_model_name, model_max_length=n_positions )
     if args.dataset in ['english', 'german']:
         preproc_tokenizer = mask_tokenizer
 
     load_base_model()
 
     print(f'Loading dataset {args.dataset}...')
-    data = generate_data(args.dataset, args.dataset_key)
+    data = generate_data(args.dataset, args.dataset_key, whichtask=args.task) # uddalok: added task
     if args.random_fills:
         FILL_DICTIONARY = set()
         for texts in data.values():
@@ -891,7 +945,7 @@ if __name__ == '__main__':
         # run perturbation experiments
         for n_perturbations in n_perturbation_list:
             perturbation_results = get_perturbation_results(args.span_length, n_perturbations, n_samples)
-            for perturbation_mode in ['d', 'z']:
+            for perturbation_mode in ['z']: #uddalok : removing mode 'd'
                 output = run_perturbation_experiment(
                     perturbation_results, perturbation_mode, span_length=args.span_length, n_perturbations=n_perturbations, n_samples=n_samples)
                 outputs.append(output)
