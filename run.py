@@ -435,9 +435,9 @@ def get_perturbation_results(span_length=10, n_perturbations=1, n_samples=500):
 
     perturb_fn = functools.partial(perturb_texts, span_length=span_length, pct=args.pct_words_masked)
 
-    p_sampled_text = perturb_fn([x for x in sampled_text for _ in range(n_perturbations)])
-    # p_sampled_text = copy.deepcopy(p_original_text) # uddalok: proxy, we dont need sampled text
     p_original_text = perturb_fn([x for x in original_text for _ in range(n_perturbations)])
+    # p_sampled_text = perturb_fn([x for x in sampled_text for _ in range(n_perturbations)])
+    p_sampled_text = copy.deepcopy(p_original_text) # uddalok: proxy, we dont need sampled text
     for _ in range(n_perturbation_rounds - 1):
         try:
             p_sampled_text, p_original_text = perturb_fn(p_sampled_text), perturb_fn(p_original_text)
@@ -458,9 +458,9 @@ def get_perturbation_results(span_length=10, n_perturbations=1, n_samples=500):
     load_base_model()
 
     for res in tqdm.tqdm(results, desc="Computing log likelihoods"):
-        p_sampled_ll = get_lls(res["perturbed_sampled"])
-        # p_sampled_ll = copy.deepcopy(p_original_ll) # uddalok: proxy, we dont need sampled text
         p_original_ll = get_lls(res["perturbed_original"])
+        # p_sampled_ll = get_lls(res["perturbed_sampled"])
+        p_sampled_ll = copy.deepcopy(p_original_ll) # uddalok: proxy, we dont need sampled text
         res["original_ll"] = get_ll(res["original"])
         res["sampled_ll"] = get_ll(res["sampled"])
         res["all_perturbed_sampled_ll"] = p_sampled_ll
@@ -607,8 +607,8 @@ def generate_samples(raw_data, batch_size, prompt=''):
     for batch in range(len(raw_data) // batch_size):
         print('Generating samples for batch', batch, 'of', len(raw_data) // batch_size)
         original_text = raw_data[batch * batch_size:(batch + 1) * batch_size]
-        # sampled_text = copy.deepcopy(original_text) # uddalok : we really don't need sample from model here - this is to increase the speed
-        sampled_text = sample_from_model(original_text, min_words=30 if args.dataset in ['pubmed'] else 10, prompt=prompt)
+        sampled_text = copy.deepcopy(original_text) # uddalok : we really don't need sample from model here - this is to increase the speed
+        # sampled_text = sample_from_model(original_text, min_words=30 if args.dataset in ['pubmed'] else 10, prompt=prompt)
 
         for o, s in zip(original_text, sampled_text):
             if args.dataset == 'pubmed':
@@ -656,6 +656,8 @@ def loadData(promptsource):
         raise NotImplementedError
 
 def generate_data(dataset, key, whichtask): # uddalok: added whichtask
+    # uddalok: hardcoding the load dataset
+    '''
     # load data
     if dataset in custom_datasets.DATASETS:
         data = custom_datasets.load(dataset, cache_dir)
@@ -666,12 +668,12 @@ def generate_data(dataset, key, whichtask): # uddalok: added whichtask
     # then take just the long examples, shuffle, take the first 5,000 to tokenize to save time
     # then take just the examples that are <= 512 tokens (for the mask model)
     # then generate n_samples samples
-
+    
     # remove duplicates from the data
     data = list(dict.fromkeys(data))  # deterministic, as opposed to set()
-
+    '''
     # uddalok: hardcode
-    samp_src = 'corpus-100-sanitized/stability1/'
+    samp_src = f'corpus-100-sanitized/{dataset}/'
     task = whichtask
     tmpFile = 'tmp.txt'
     cmd = 'find {}/../../{}/samples0{}.ds* > {}'.format(os.getcwd(), samp_src, task, tmpFile)
@@ -687,6 +689,8 @@ def generate_data(dataset, key, whichtask): # uddalok: added whichtask
     allprompts, taskid = loadData('../../HumanEval.jsonl')
     prompt = allprompts[int(task)]
 
+    #uddalok: the  following jeopardises the samples
+    '''
     # strip whitespace around each example
     data = [x.strip() for x in data]
 
@@ -698,7 +702,7 @@ def generate_data(dataset, key, whichtask): # uddalok: added whichtask
         long_data = [x for x in data if len(x.split()) > 250]
         if len(long_data) > 0:
             data = long_data
-
+    '''
     random.seed(0)
     random.shuffle(data)
 
@@ -799,7 +803,7 @@ if __name__ == '__main__':
     DEVICE = "cuda"
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, default="xsum")
+    parser.add_argument('--dataset', type=str, default="stability1")
     parser.add_argument('--dataset_key', type=str, default="document")
     parser.add_argument('--pct_words_masked', type=float, default=0.3) # pct masked is actually pct_words_masked * (span_length / (span_length + 2 * buffer_size))
     parser.add_argument('--span_length', type=int, default=2)
@@ -991,3 +995,7 @@ if __name__ == '__main__':
     os.rename(SAVE_FOLDER, new_folder)
 
     print(f"Used an *estimated* {API_TOKEN_COUNTER} API tokens (may be inaccurate)")
+
+    # uddalok : save predictions
+    real_preds = np.array(outputs[0]['predictions']['real'])
+    np.save(f"{args.dataset}_{args.task}.npy", real_preds)  # Binary format
