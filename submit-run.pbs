@@ -110,4 +110,4 @@ source /home/project/11000744/software/anaconda3/bin/activate
 cd  ${PBS_O_WORKDIR}
 [ -d log ] || mkdir log
 
-mpirun python execute-run.py  --offset 50
+mpirun python execute_run.py  --offset 0
