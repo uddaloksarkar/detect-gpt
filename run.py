@@ -998,4 +998,8 @@ if __name__ == '__main__':
 
     # uddalok : save predictions
     real_preds = np.array(outputs[0]['predictions']['real'])
+<<<<<<< HEAD
     np.save(f"{args.dataset}_{base_model_name[:2]}_{args.task}.npy", real_preds)  # Binary format
+=======
+    np.save(f"{args.dataset}_{args.task}.npy", real_preds)  # Binary format
+>>>>>>> 7245d3492a5035fbc114690a7d4a5415f703b104
