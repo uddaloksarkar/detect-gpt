@@ -436,8 +436,8 @@ def get_perturbation_results(span_length=10, n_perturbations=1, n_samples=500):
     perturb_fn = functools.partial(perturb_texts, span_length=span_length, pct=args.pct_words_masked)
 
     p_original_text = perturb_fn([x for x in original_text for _ in range(n_perturbations)])
-    # p_sampled_text = perturb_fn([x for x in sampled_text for _ in range(n_perturbations)])
-    p_sampled_text = copy.deepcopy(p_original_text) # uddalok: proxy, we dont need sampled text
+    p_sampled_text = perturb_fn([x for x in sampled_text for _ in range(n_perturbations)])
+    # p_sampled_text = copy.deepcopy(p_original_text) # uddalok: proxy, we dont need sampled text
     for _ in range(n_perturbation_rounds - 1):
         try:
             p_sampled_text, p_original_text = perturb_fn(p_sampled_text), perturb_fn(p_original_text)
@@ -459,8 +459,8 @@ def get_perturbation_results(span_length=10, n_perturbations=1, n_samples=500):
 
     for res in tqdm.tqdm(results, desc="Computing log likelihoods"):
         p_original_ll = get_lls(res["perturbed_original"])
-        # p_sampled_ll = get_lls(res["perturbed_sampled"])
-        p_sampled_ll = copy.deepcopy(p_original_ll) # uddalok: proxy, we dont need sampled text
+        p_sampled_ll = get_lls(res["perturbed_sampled"])
+        # p_sampled_ll = copy.deepcopy(p_original_ll) # uddalok: proxy, we dont need sampled text
         res["original_ll"] = get_ll(res["original"])
         res["sampled_ll"] = get_ll(res["sampled"])
         res["all_perturbed_sampled_ll"] = p_sampled_ll
@@ -607,8 +607,8 @@ def generate_samples(raw_data, batch_size, prompt=''):
     for batch in range(len(raw_data) // batch_size):
         print('Generating samples for batch', batch, 'of', len(raw_data) // batch_size)
         original_text = raw_data[batch * batch_size:(batch + 1) * batch_size]
-        sampled_text = copy.deepcopy(original_text) # uddalok : we really don't need sample from model here - this is to increase the speed
-        # sampled_text = sample_from_model(original_text, min_words=30 if args.dataset in ['pubmed'] else 10, prompt=prompt)
+        # sampled_text = copy.deepcopy(original_text) # uddalok : we really don't need sample from model here - this is to increase the speed
+        sampled_text = sample_from_model(original_text, min_words=30 if args.dataset in ['pubmed'] else 10, prompt=prompt)
 
         for o, s in zip(original_text, sampled_text):
             if args.dataset == 'pubmed':
@@ -998,4 +998,4 @@ if __name__ == '__main__':
 
     # uddalok : save predictions
     real_preds = np.array(outputs[0]['predictions']['real'])
-    np.save(f"{args.dataset}_{base_model_name[:2]}_{args.task}.npy", real_preds)  # Binary format
+    np.save(f"{args.dataset}_{args.task}.npy", real_preds)  # Binary format
