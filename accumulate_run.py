@@ -63,12 +63,14 @@ def main():
     parser.add_argument("--eps2", type=float, help="Farness parameter", dest='eps2')
     parser.add_argument("--expeps", type=float, help="Experiment's Farness parameter", dest='exp_eps')
     parser.add_argument('--verb', dest='verb', help="verbosity")
+    parser.add_argument('--seed', dest='seed', type=int, help="seed")
 
     # args.npy_files = model_files
     args = parser.parse_args()
     eps1 = args.eps1 / 100
     eps2 = args.eps2 / 100
     exp_eps = args.exp_eps / 100
+    np.random.seed(args.seed)
 
     model_files = [f for f in os.listdir('.') if f.startswith(args.model) and f.endswith('.npy')]
     if not model_files:
