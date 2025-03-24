@@ -63,28 +63,32 @@ def main():
     parser.add_argument("--eps2", type=float, help="Farness parameter", dest='eps2')
     parser.add_argument("--expeps", type=float, help="Experiment's Farness parameter", dest='exp_eps')
     parser.add_argument('--verb', dest='verb', help="verbosity")
+    parser.add_argument('--seed', dest='seed', type=int, help="seed")
 
     # args.npy_files = model_files
     args = parser.parse_args()
     eps1 = args.eps1 / 100
     eps2 = args.eps2 / 100
     exp_eps = args.exp_eps / 100
+    np.random.seed(args.seed)
 
-    model_files = [f for f in os.listdir('.') if f.startswith(args.model) and f.endswith('.npy')]
+    model_files = [f for f in os.listdir(f'./{args.model}') if f.startswith(args.model) and f.endswith('.npy')]
+    print(model_files)
     if not model_files:
         print(f"No files found starting with {args.model}")
     
     positive_elems = []
     negative_elems = []
     for model_file in model_files:
-        if os.path.exists(model_file):
-            data_file = model_file.replace(args.model, args.dataset)
+        model_path = os.path.join(f'./{args.model}', model_file)
+        if os.path.exists(model_path):
+            data_file = os.path.join(f'./{args.model}', model_file.replace(args.model, args.dataset))
             if not os.path.exists(data_file):
                 if args.verb: print(f"Error: {data_file} not found.")
                 continue
             
             # get the files 
-            model_data = np.load(model_file)
+            model_data = np.load(model_path)
             data_data = np.load(data_file)
             positive_data, negative_data = lazy_data_mix(model_data, data_data, eps1, eps2)
             epsmedian = compute_eps_fraction_element(positive_data, exp_eps)
